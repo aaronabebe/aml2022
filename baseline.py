@@ -1,83 +1,84 @@
-import pandas as pd
-import numpy as np
-import plotly.express as px
+import time
 
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import GridSearchCV
 from sklearn.model_selection import train_test_split
-from sklearn.linear_model import Lasso
-from sklearn.model_selection import RandomizedSearchCV, GridSearchCV
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 
+from utils import get_cv_idx, load_csv, save_submission_csv
 
 DATA_DIR = './data'
+RESULT_DIR = './results'
+
+COL_SELECTION = [
+    'index', 'fact_time', 'fact_latitude', 'fact_longitude',
+    'topography_bathymetry', 'sun_elevation', 'cmc_precipitations',
+    'gfs_a_vorticity', 'gfs_cloudness', 'gfs_clouds_sea', 'gfs_humidity',
+    'fact_temperature'
+]
 
 
-def compute_rmse(y, ypred, ystd=1.):
-    return np.mean((y - ypred)**2)**0.5 * ystd
+def grid_search(model, X, y):
+    train_idx, cv_idx = get_cv_idx(len(X), test_size=0.3, n_splits=10)
 
-def get_cv_idx(n, test_size=0.2, n_splits=2):
-    train_idx, test_idx = [], []
-    for _ in range(n_splits):
-        idx = np.random.permutation(n)
-        train_size = int(n * (1 - test_size)) if isinstance(test_size, float) else n - test_size
-        train_idx.append(idx[:train_size])
-        test_idx.append(idx[train_size:])
-    return train_idx, test_idx
+    param_grid = {
+        'lasso__alpha': [0.001, 0.01, 0.1, 1, 10],
+    }
 
-
-df = pd.read_csv(f'{DATA_DIR}/public/train.csv', nrows=100000)
-
-
-col_selection = ['index', 'fact_time', 'fact_latitude', 'fact_longitude', 'fact_temperature']
-
-df_plot = df[col_selection]
-
-fig = px.scatter_geo(df_plot, lat="fact_latitude", lon="fact_longitude", color="fact_temperature")
-fig.show()
-
-X = df[col_selection].dropna().iloc[:, 1:-1].values
-y = df[col_selection].dropna().iloc[:, -1].values
-
-Xmean, Xstd, ymean, ystd = X.mean(0), X.std(0), y.mean(), y.std()
-X = (X - Xmean) / Xstd
-y = (y - ymean) / ystd
+    search = GridSearchCV(
+        model,
+        param_grid,
+        n_jobs=-1,
+        verbose=1,
+        cv=zip(train_idx, cv_idx),
+        scoring='neg_root_mean_squared_error'
+    ).fit(X, y)
+    print('Best parameters set found on cv set:')
+    print(search.best_params_)
+    print()
+    print('Grid scores on cv set:')
+    means = search.cv_results_['mean_test_score']
+    stds = search.cv_results_['std_test_score']
+    for mean, std, params in zip(means, stds, search.cv_results_['params']):
+        print('%0.3f (+/-%0.03f) for %r' % (mean, std, params))
+    return search
 
 
-Xtr, Xval, ytr, yval = train_test_split(X, y, random_state=1, test_size=3000)
-
-model = Lasso(alpha=1)
-model.fit(Xtr, ytr)
-ypred_tr = model.predict(Xtr)
-ypred_val = model.predict(Xval)
-
-print(f'Train RMSE: {compute_rmse(ytr, ypred_tr, ystd):.3f}')
-print(f'Valid RMSE: {compute_rmse(yval, ypred_val, ystd):.3f}')
+def drop_irrelevant_features(df):
+    # geo_plot(df[col_selection], col_name='fact_temperature')
+    X = df[COL_SELECTION].dropna().iloc[:, 1:-1].values
+    y = df[COL_SELECTION].dropna().iloc[:, -1].values
+    return X, y
 
 
-print('\ndoing gridsearch...')
-train_idx, cv_idx = get_cv_idx(len(Xtr), test_size=10000, n_splits=10)
+def main():
+    df = load_csv(f'{DATA_DIR}/public/train.csv')
+    X, y = drop_irrelevant_features(df)
+
+    Xtr, Xval, ytr, yval = train_test_split(X, y, random_state=1, test_size=0.40)
+    model = make_pipeline(StandardScaler(), RandomForestRegressor(n_jobs=8, n_estimators=24, verbose=True))
+
+    model.fit(Xtr, ytr)
+    ypred_tr = model.predict(Xtr)
+    ypred_val = model.predict(Xval)
+
+    print(f'Train RMSE: {mean_squared_error(ytr, ypred_tr, squared=False):.3f}')
+    print(f'Valid RMSE: {mean_squared_error(yval, ypred_val, squared=False):.3f}')
+
+    # NOTE: uncomment for gridsearch
+    # search = grid_search(model, Xtr, ytr)
+    # ypred_val = search.predict(Xval)
+    # print('Error on the validation set')
+    # print(f'Valid RMSE: {mean_squared_error(yval, ypred_val, squared=False):.3f}')
+
+    df_test = load_csv(f'{DATA_DIR}/public/test_feat.csv')
+    x_val = df_test[COL_SELECTION[:-1]].iloc[:, 1:].values
+
+    y_pred = model.predict(x_val)
+    save_submission_csv(f'{RESULT_DIR}/{time.time()}_submission.csv', df_test, y_pred)
 
 
-param_grid = {
-    "alpha": [0.001, 0.01, 0.1, 1, 10]
-}
-
-search = GridSearchCV(model,
-                      param_grid,
-                      n_jobs=-1,
-                      verbose=1,
-                      cv=zip(train_idx, cv_idx),
-                      scoring='neg_root_mean_squared_error').fit(Xtr, ytr)
-print('Done!')
-
-print("Best parameters set found on cv set:")
-print(search.best_params_)
-print()
-print("Grid scores on cv set:")
-means = search.cv_results_["mean_test_score"]
-stds = search.cv_results_["std_test_score"]
-for mean, std, params in zip(means, stds, search.cv_results_["params"]):
-    print("%0.3f (+/-%0.03f) for %r" % (-mean * ystd, (std * ystd) * 2, params))
-print()
-print("Error on the validation set")
-ypred_val = search.predict(Xval)
-print(f'Valid RMSE: {compute_rmse(yval, ypred_val, ystd):.3f}')
-
+if __name__ == '__main__':
+    main()
