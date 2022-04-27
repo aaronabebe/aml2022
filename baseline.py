@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import plotly.express as px
 
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import Lasso
@@ -22,11 +23,15 @@ def get_cv_idx(n, test_size=0.2, n_splits=2):
     return train_idx, test_idx
 
 
-df = pd.read_csv(f'{DATA_DIR}/public/train.csv')
+df = pd.read_csv(f'{DATA_DIR}/public/train.csv', nrows=100000)
 
-print(df.head())
 
 col_selection = ['index', 'fact_time', 'fact_latitude', 'fact_longitude', 'fact_temperature']
+
+df_plot = df[col_selection]
+
+fig = px.scatter_geo(df_plot, lat="fact_latitude", lon="fact_longitude", color="fact_temperature")
+fig.show()
 
 X = df[col_selection].dropna().iloc[:, 1:-1].values
 y = df[col_selection].dropna().iloc[:, -1].values
