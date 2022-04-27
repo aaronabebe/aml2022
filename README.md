@@ -25,3 +25,9 @@ pip install -r requirements.txt
 
 - plotly express: https://plotly.com/python/plotly-express/#outline-maps
 - scikit learn docs: https://scikit-learn.org/stable/modules/classes.html#module-sklearn.svm
+
+
+### Ideen 
+
+Bias Idee - Datenset um Laender erweitern um Bias in Messorten via lat/long zu zeigen. 
+Hypothese: Mehr Messungen in reicheren Laendern fuehren zu Bias. 
